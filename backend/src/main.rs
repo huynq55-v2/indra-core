@@ -1,4 +1,7 @@
-use axum::{Router, routing::get};
+mod handlers;
+mod models;
+
+use axum::{routing::post, Router};
 use neo4rs::{ConfigBuilder, Graph};
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
@@ -33,11 +36,9 @@ async fn main() {
 
     // 3. Định nghĩa các Route (Đường dẫn API)
     let app = Router::new()
-        .route(
-            "/",
-            get(|| async { "Chào mừng tới IndraCore P2P Network!" }),
-        )
-        .layer(CorsLayer::permissive()) // Cho phép Frontend kết nối
+        .route("/api/auth/register", post(handlers::auth::register))
+        .route("/api/auth/login", post(handlers::auth::login))
+        .layer(CorsLayer::permissive())
         .with_state(shared_state);
 
     // 4. Chạy Server
