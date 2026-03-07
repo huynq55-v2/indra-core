@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  neo4j:
+    image: neo4j:5
+    container_name: indracore-db
+    ports:
+      - "7474:7474"   # Port cho Neo4j Browser (Giao diện web để xem Graph)
+      - "7687:7687"   # Port giao tiếp Bolt (Dành cho Backend Rust kết nối)
+    environment:
+      - NEO4J_AUTH=neo4j/indracore123 # Tài khoản: neo4j / Mật khẩu: indracore123
+      - NEO4J_PLUGINS=["apoc"]        # Thư viện thuật toán đồ thị (rất cần sau này)
+    volumes:
+      - ./neo4j_data/data:/data       # Lưu trữ dữ liệu vật lý
+      - ./neo4j_data/logs:/logs
+    restart: unless-stopped
