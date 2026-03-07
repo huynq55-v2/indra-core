@@ -1,2 +1,3 @@
 CREATE CONSTRAINT user_id_unique FOR (u:User) REQUIRE u.id IS UNIQUE;
 CREATE CONSTRAINT username_unique FOR (u:User) REQUIRE u.username IS UNIQUE;
+CREATE CONSTRAINT invitecode_unique FOR (i:InviteCode) REQUIRE i.code IS UNIQUE;

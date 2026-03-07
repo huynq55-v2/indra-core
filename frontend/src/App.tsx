@@ -4,7 +4,7 @@ import GraphViewer from './components/GraphViewer'; // Import component GraphVie
 
 function App() {
   const [isLogin, setIsLogin] = useState(true);
-  const [form, setForm] = useState({ username: '', password: '' });
+  const [form, setForm] = useState({ username: '', password: '', invite_code: '' });
   const [userData, setUserData] = useState<any>(null); // Lưu thông tin sau login
 
   // Khôi phục phiên đăng nhập từ LocalStorage
@@ -38,7 +38,7 @@ function App() {
   const handleLogout = () => {
     localStorage.removeItem('indra_session');
     setUserData(null);
-    setForm({ username: '', password: '' });
+    setForm({ username: '', password: '', invite_code: '' });
   };
 
   // Nếu đã đăng nhập thành công, hiện màn hình Đồ thị
@@ -64,14 +64,56 @@ function App() {
             </div>
           </div>
           
-          <div className="grid grid-cols-1 gap-6">
-            <GraphViewer />
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
-              <h3 className="text-cyan-500 font-bold mb-2">Hệ thống Đồ thị</h3>
-              <p className="text-slate-400 text-sm italic">
-                * Node xanh dương đại diện cho User. Node vàng đại diện cho lõi IndraCore.<br/>
-                * Edge kết nối bạn với mạng lưới.
-              </p>
+          <div className="grid grid-cols-[1fr_300px] gap-6 items-start">
+            <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden h-full min-h-[500px]">
+              <GraphViewer userId={userData.user_id} />
+            </div>
+            
+            <div className="flex flex-col gap-6">
+              <div className="bg-slate-900 border border-slate-800 p-5 rounded-lg">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-cyan-500 font-bold">Quản lý Mã Mời</h3>
+                  <button 
+                    onClick={async () => {
+                      try {
+                        const { data } = await axios.post("http://localhost:3000/api/auth/invite/generate", { user_id: userData.user_id });
+                        const updated = {...userData, invite_codes: [...(userData.invite_codes || []), data]};
+                        setUserData(updated);
+                        localStorage.setItem('indra_session', JSON.stringify(updated));
+                      } catch (err) {
+                        alert("Không thể tạo mã mời mới lúc này!");
+                      }
+                    }}
+                    className="text-xs bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-1.5 rounded transition-colors"
+                  >
+                    + Tạo mã mời
+                  </button>
+                </div>
+                
+                {(!userData.invite_codes || userData.invite_codes.length === 0) ? (
+                  <p className="text-slate-500 text-sm italic">Bạn chưa tạo mã mời nào.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {userData.invite_codes.map((ic: any, index: number) => (
+                      <li key={index} className="flex justify-between items-center p-2 bg-slate-950 rounded border border-slate-800">
+                        <span className="font-mono text-cyan-400 text-sm font-bold">{ic.code}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded ${ic.used ? 'bg-slate-800 text-slate-500' : 'bg-emerald-950 text-emerald-400 border border-emerald-900/50'}`}>
+                          {ic.used ? 'Đã dùng' : 'Khả dụng'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              
+              <div className="bg-slate-900 border border-slate-800 p-5 rounded-lg">
+                <h3 className="text-cyan-500 font-bold mb-2">Hệ thống Đồ thị</h3>
+                <p className="text-slate-400 text-sm italic leading-relaxed">
+                  * Node xanh dương đại diện cho User. <br/>
+                  * Node vàng đại diện cho lõi IndraCore.<br/>
+                  * Edge kết nối là liên kết "Mời" giữa hai Node.
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -118,6 +160,18 @@ function App() {
                  placeholder="Nhập mật khẩu"
                />
              </div>
+             {!isLogin && (
+               <div>
+                 <label className="block text-slate-400 text-sm mb-1 ml-1 font-medium">Mã mời (Tùy chọn)</label>
+                 <input 
+                   type="text" 
+                   className="w-full bg-slate-900 text-white border border-slate-700 rounded-lg px-4 py-3 outline-none focus:border-cyan-500 hover:border-slate-600 transition-colors placeholder:text-slate-500 uppercase"
+                   value={form.invite_code}
+                   onChange={(e) => setForm({...form, invite_code: e.target.value.toUpperCase()})}
+                   placeholder="Nhập mã mời liên kết (vd: INA-A5B2C3)"
+                 />
+               </div>
+             )}
              <button 
                type="submit" 
                className="w-full bg-gradient-to-r from-cyan-600 to-teal-500 hover:from-cyan-500 hover:to-teal-400 text-white shadow-lg shadow-cyan-900/20 font-bold py-3 px-4 rounded-lg transition-all transform active:scale-[0.98]"
@@ -129,7 +183,7 @@ function App() {
              <button 
                onClick={() => {
                  setIsLogin(!isLogin);
-                 setForm({ username: '', password: '' });
+                 setForm({ username: '', password: '', invite_code: '' });
                }} 
                className="text-slate-400 hover:text-cyan-400 text-sm font-medium transition-colors"
              >

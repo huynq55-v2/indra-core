@@ -1,7 +1,7 @@
 mod handlers;
 mod models;
 
-use axum::{routing::post, Router};
+use axum::{routing::{post, get}, Router};
 use neo4rs::{ConfigBuilder, Graph};
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
@@ -38,6 +38,8 @@ async fn main() {
     let app = Router::new()
         .route("/api/auth/register", post(handlers::auth::register))
         .route("/api/auth/login", post(handlers::auth::login))
+        .route("/api/auth/invite/generate", post(handlers::auth::generate_invite))
+        .route("/api/graph/user/:user_id", get(handlers::graph::get_user_graph))
         .layer(CorsLayer::permissive())
         .with_state(shared_state);
 
