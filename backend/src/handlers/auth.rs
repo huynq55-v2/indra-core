@@ -75,7 +75,7 @@ pub async fn register(
              CREATE (u:User {id: $id, username: $username, password: $password})
              CREATE (u)-[:INVITED_BY]->(inviter)
              CREATE (u)-[:USED_CODE]->(ic)
-             RETURN u.id"
+             RETURN u.id",
         )
         .param("inviter_code", inviter_code)
         .param("id", user_id.clone())
@@ -112,7 +112,7 @@ pub async fn register(
         let q_genesis = query(
             "CREATE (u:User {id: $id, username: $username, password: $password})
              MERGE (s:System {id: $system_id})
-             CREATE (u)-[:BECOMES_GENESIS]->(s)"
+             CREATE (u)-[:BECOMES_GENESIS]->(s)",
         )
         .param("id", user_id.clone())
         .param("username", payload.username.clone())
@@ -153,16 +153,12 @@ pub async fn login(
             .param("username", payload.username.clone());
 
     let mut stream = state.graph.execute(q_find).await.unwrap();
-    let row = stream
-        .next()
-        .await
-        .unwrap()
-        .ok_or((
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                message: "Sai tên đăng nhập hoặc mật khẩu.".to_string(),
-            }),
-        ))?;
+    let row = stream.next().await.unwrap().ok_or((
+        StatusCode::UNAUTHORIZED,
+        Json(ErrorResponse {
+            message: "Sai tên đăng nhập hoặc mật khẩu.".to_string(),
+        }),
+    ))?;
 
     let db_pass: String = row.get("password").unwrap();
     let user_id: String = row.get("id").unwrap();
@@ -180,7 +176,7 @@ pub async fn login(
     // 3. Lấy danh sách mã mời mà user này đã tạo
     let q_invites = query("MATCH (u:User {id: $id})-[:GENERATED]->(ic:InviteCode) RETURN ic.code AS code, ic.used AS used")
         .param("id", user_id.clone());
-    
+
     let mut invites = vec![];
     let mut inv_stream = state.graph.execute(q_invites).await.unwrap();
     while let Ok(Some(inv_row)) = inv_stream.next().await {
@@ -196,7 +192,7 @@ pub async fn login(
     let mut me_stream = state.graph.execute(q_is_me).await.unwrap();
     let me_row = me_stream.next().await.unwrap().unwrap();
     let c: i64 = me_row.get("c").unwrap();
-    
+
     let is_genesis = c > 0;
 
     Ok(Json(AuthResponse {
@@ -212,14 +208,14 @@ pub async fn generate_invite(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<GenerateInvitePayload>,
 ) -> Result<Json<InviteCodeInfo>, (StatusCode, Json<ErrorResponse>)> {
-    let new_code_str = format!("INA-{}", &Uuid::new_v4().to_string()[0..6]).to_uppercase();
+    let new_code_str = format!("INA-{}", &Uuid::new_v4().to_string()[0..36]).to_uppercase();
 
     // Check if user exists
     let q_create = query(
         "MATCH (u:User {id: $user_id})
          CREATE (ic:InviteCode {code: $code, used: false})
          CREATE (u)-[:GENERATED]->(ic)
-         RETURN ic.code AS code, ic.used AS used"
+         RETURN ic.code AS code, ic.used AS used",
     )
     .param("user_id", payload.user_id.clone())
     .param("code", new_code_str);
