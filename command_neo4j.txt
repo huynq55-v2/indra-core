@@ -1,3 +1,13 @@
-CREATE CONSTRAINT user_id_unique FOR (u:User) REQUIRE u.id IS UNIQUE;
+// 1. Xóa toàn bộ dữ liệu (Nodes và Relationships)
+MATCH (n) DETACH DELETE n;
+
+// 2. Xóa các Ràng buộc cũ (Nếu có, để khi tạo lại không bị báo lỗi "Already exists")
+DROP CONSTRAINT user_id_unique IF EXISTS;
+DROP CONSTRAINT username_unique IF EXISTS;
+DROP CONSTRAINT invitecode_unique IF EXISTS;
+DROP CONSTRAINT request_id_unique IF EXISTS;
+
+// 3. Tạo lại các Constraint mới (Áp dụng đúng chuẩn kiến trúc Node OOP phân rã theo Interface :Entity)
+CREATE CONSTRAINT entity_id_unique FOR (e:Entity) REQUIRE e.id IS UNIQUE;
 CREATE CONSTRAINT username_unique FOR (u:User) REQUIRE u.username IS UNIQUE;
 CREATE CONSTRAINT invitecode_unique FOR (i:InviteCode) REQUIRE i.code IS UNIQUE;

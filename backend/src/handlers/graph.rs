@@ -38,8 +38,8 @@ pub async fn get_user_graph(
         MATCH (u:User {id: $user_id})-[r]-(m)
         WITH r, startNode(r) AS s, endNode(r) AS e
         RETURN DISTINCT
-            COALESCE(s.id, s.code) as source_id, labels(s)[0] as source_label, s.username as source_name, s.code as source_code,
-            COALESCE(e.id, e.code) as target_id, labels(e)[0] as target_label, e.username as target_name, e.code as target_code,
+            COALESCE(s.id, s.code) as source_id, [x IN labels(s) WHERE x <> 'Entity'][0] as source_label, s.username as source_name, s.code as source_code,
+            COALESCE(e.id, e.code) as target_id, [x IN labels(e) WHERE x <> 'Entity'][0] as target_label, e.username as target_name, e.code as target_code,
             type(r) as rel_type
     ";
 

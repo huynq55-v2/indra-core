@@ -83,14 +83,15 @@ export default function GraphViewer({ userId }: { userId: string }) {
         linkDirectionalArrowLength={3.5}
         linkDirectionalArrowRelPos={1}
         nodeCanvasObject={(node: any, ctx, globalScale) => {
-          const label = node.name || node.id;
-          const fontSize = 12 / globalScale;
+          const label = `[${node.label}] ${node.name || node.id}`;
+          const fontSize = 10 / globalScale;
           ctx.font = `${fontSize}px Sans-Serif`;
 
           // Thay đổi màu sắc theo loại Node
           if (node.id === userId) ctx.fillStyle = '#06b6d4'; // Cyan-500: Chính mình
           else if (node.label === 'System') ctx.fillStyle = '#eab308'; // Vàng: Core
           else if (node.label === 'InviteCode') ctx.fillStyle = '#10b981'; // Xanh lá: Mã mời
+          else if (node.label === 'UserRegistrationConsensusNode') ctx.fillStyle = '#f97316'; // Cam: Node chờ duyệt
           else ctx.fillStyle = '#3b82f6'; // Blue: User khác
 
           ctx.beginPath();

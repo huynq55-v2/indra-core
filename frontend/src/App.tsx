@@ -15,6 +15,25 @@ function App() {
     }
   }, []);
 
+  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+
+  const fetchPendingRequests = async () => {
+    try {
+      const { data } = await axios.get("http://localhost:3000/api/auth/pending-requests");
+      setPendingRequests(data);
+    } catch(err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    if (userData) {
+      fetchPendingRequests();
+      const interval = setInterval(fetchPendingRequests, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [userData]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const endpoint = isLogin ? "/login" : "/register";
@@ -106,6 +125,83 @@ function App() {
                 )}
               </div>
               
+              <div className="bg-slate-900 border border-slate-800 p-5 rounded-lg max-h-96 overflow-y-auto">
+                <h3 className="text-amber-500 font-bold mb-4 flex items-center gap-2">
+                   Đồng Thuận (Consensus)
+                </h3>
+                
+                {pendingRequests.length === 0 ? (
+                  <p className="text-slate-500 text-sm italic">Không có yêu cầu đăng ký nào đang chờ.</p>
+                ) : (
+                  <ul className="space-y-4">
+                    {pendingRequests.map((req: any) => (
+                      <li key={req.id} className="bg-slate-950 p-3 rounded border border-slate-800">
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <p className="text-cyan-300 font-bold text-sm">User: {req.username}</p>
+                            <p className="text-slate-500 text-xs font-mono">Code: {req.invite_code}</p>
+                          </div>
+                          <span className={`text-[10px] font-bold px-2 py-1 rounded ${req.status === 'LOCKED' ? 'bg-amber-900/50 text-amber-500 border border-amber-800' : 'bg-blue-900/50 text-blue-400 border border-blue-800'}`}>
+                            {req.status}
+                          </span>
+                        </div>
+                        
+                        <div className="flex flex-wrap gap-2 mt-3">
+                          {(() => {
+                            const hasVotedOpts = req.voted_by && req.voted_by.includes(userData.user_id);
+                            return (
+                              <button 
+                                onClick={async () => {
+                                  try {
+                                    // Gửi lại request vote với giá trị approve đảo ngược (toggle)
+                                    await axios.post("http://localhost:3000/api/auth/vote", { 
+                                      user_id: userData.user_id, 
+                                      request_id: req.id, 
+                                      approve: !hasVotedOpts 
+                                    });
+                                    alert(hasVotedOpts ? "Đã rút phiếu bầu!" : "Đã vote Đồng ý!");
+                                    fetchPendingRequests();
+                                  } catch(e:any) { alert(e.response?.data?.message || "Lỗi") }
+                                }}
+                                className={`text-white text-xs px-3 py-1.5 rounded transition duration-200 ${hasVotedOpts ? 'bg-rose-600 hover:bg-rose-500' : 'bg-blue-600 hover:bg-blue-500'}`}
+                              >
+                                {hasVotedOpts ? 'Hủy Vote' : 'Vote Đồng Ý'}
+                              </button>
+                            );
+                          })()}
+
+                          {req.status === 'PENDING' && (
+                            <button 
+                              onClick={async () => {
+                                try {
+                                  await axios.post("http://localhost:3000/api/auth/lock-consensus", { user_id: userData.user_id, request_id: req.id });
+                                  alert("Đã chốt (Locked)!");
+                                  fetchPendingRequests();
+                                } catch(e:any) { alert(e.response?.data?.message || "Lỗi") }
+                              }}
+                              className="bg-amber-600 hover:bg-amber-500 text-white text-xs px-3 py-1.5 rounded"
+                            >Chốt</button>
+                          )}
+
+                          {req.status === 'LOCKED' && (
+                            <button 
+                              onClick={async () => {
+                                try {
+                                  const res = await axios.post("http://localhost:3000/api/auth/confirm-consensus", { user_id: userData.user_id, request_id: req.id });
+                                  alert(res.data.message);
+                                  fetchPendingRequests();
+                                } catch(e:any) { alert(e.response?.data?.message || "Lỗi") }
+                              }}
+                              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-3 py-1.5 rounded"
+                            >Xác nhận (Confirm)</button>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
               <div className="bg-slate-900 border border-slate-800 p-5 rounded-lg">
                 <h3 className="text-cyan-500 font-bold mb-2">Hệ thống Đồ thị</h3>
                 <p className="text-slate-400 text-sm italic leading-relaxed">

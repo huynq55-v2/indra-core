@@ -59,3 +59,40 @@ impl Edge for BecomesGenesisEdge {
         "BECOMES_GENESIS"
     }
 }
+
+// 4. Các Base Trait cho Đồng thuận (Consensus)
+pub trait ConsensusNode: GraphEntity {
+    fn get_id(&self) -> &str;
+    fn get_status(&self) -> &str;
+    fn get_locked_at(&self) -> Option<&String>;
+}
+
+// 5. Các Struct cụ thể cho Đồng thuận
+#[derive(Serialize, Deserialize)]
+pub struct UserRegistrationConsensusNode {
+    pub id: String,
+    pub username: String,
+    pub password_hash: String,
+    pub invite_code: String,
+    pub status: String,
+    pub locked_at: Option<String>,
+    pub locked_by: Option<String>,
+}
+
+impl GraphEntity for UserRegistrationConsensusNode {
+    fn get_type(&self) -> EntityType {
+        EntityType::Node
+    }
+}
+
+impl ConsensusNode for UserRegistrationConsensusNode {
+    fn get_id(&self) -> &str {
+        &self.id
+    }
+    fn get_status(&self) -> &str {
+        &self.status
+    }
+    fn get_locked_at(&self) -> Option<&String> {
+        self.locked_at.as_ref()
+    }
+}
