@@ -6,6 +6,7 @@ DROP CONSTRAINT user_id_unique IF EXISTS;
 DROP CONSTRAINT username_unique IF EXISTS;
 DROP CONSTRAINT invitecode_unique IF EXISTS;
 DROP CONSTRAINT request_id_unique IF EXISTS;
+DROP CONSTRAINT entity_id_unique IF EXISTS;
 
 // 3. Tạo lại các Constraint mới (Áp dụng đúng chuẩn kiến trúc Node OOP phân rã theo Interface :Entity)
 CREATE CONSTRAINT entity_id_unique FOR (e:Entity) REQUIRE e.id IS UNIQUE;

@@ -40,8 +40,6 @@ async fn main() {
         .route("/api/auth/login", post(handlers::auth::login))
         .route("/api/auth/invite/generate", post(handlers::auth::generate_invite))
         .route("/api/auth/vote", post(handlers::auth::vote))
-        .route("/api/auth/lock-consensus", post(handlers::auth::lock_consensus))
-        .route("/api/auth/confirm-consensus", post(handlers::auth::confirm_consensus))
         .route("/api/auth/pending-requests", get(handlers::auth::get_pending_requests))
         .route("/api/graph/user/:user_id", get(handlers::graph::get_user_graph))
         .layer(CorsLayer::permissive())

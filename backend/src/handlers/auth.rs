@@ -29,6 +29,7 @@ pub struct PendingRequestInfo {
     pub locked_by: Option<String>,
     pub locked_at: Option<String>,
     pub voted_by: Vec<String>, // Danh sách user_id đã vote Approve
+    pub total_users: i64,      // Tổng số user trong hệ thống tại lúc fetch
 }
 
 #[derive(Serialize)]
@@ -196,12 +197,31 @@ pub async fn login(
             .param("username", payload.username.clone());
 
     let mut stream = state.graph.execute(q_find).await.unwrap();
-    let row = stream.next().await.unwrap().ok_or((
-        StatusCode::UNAUTHORIZED,
-        Json(ErrorResponse {
-            message: "Sai tên đăng nhập hoặc mật khẩu.".to_string(),
-        }),
-    ))?;
+    let row_opt = stream.next().await.unwrap();
+    
+    // Nếu không tìm thấy User, kiểm tra xem có đang đợi đồng thuận không
+    if row_opt.is_none() {
+        let q_pending = query("MATCH (req:UserRegistrationConsensusNode {username: $username}) RETURN req.status AS status")
+            .param("username", payload.username.clone());
+        let mut stream_pending = state.graph.execute(q_pending).await.unwrap();
+        if let Some(_) = stream_pending.next().await.unwrap() {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    message: "Tài khoản của bạn đang chờ mạng lưới đồng thuận để tham gia vào hệ thống. Vui lòng quay lại sau.".to_string(),
+                }),
+            ));
+        }
+
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                message: "Sai tên đăng nhập hoặc mật khẩu.".to_string(),
+            }),
+        ));
+    }
+
+    let row = row_opt.unwrap();
 
     let db_pass: String = row.get("password").unwrap();
     let user_id: String = row.get("id").unwrap();
@@ -294,6 +314,7 @@ pub async fn vote(
 ) -> Result<Json<AuthResponse>, (StatusCode, Json<ErrorResponse>)> {
     let q_vote = query(
         "MATCH (u:User {id: $user_id}), (req:UserRegistrationConsensusNode {id: $request_id})
+         WHERE u.username <> req.username
          MERGE (u)-[v:VOTED_FOR]->(req)
          SET v.approve = $approve, v.updated_at = datetime()
          RETURN req.status AS status"
@@ -316,27 +337,56 @@ pub async fn vote(
 
     let status: String = row.get("status").unwrap_or_else(|_| "PENDING".to_string());
 
-    if status == "LOCKED" && !payload.approve {
-        let q_check = query(
-            "MATCH (u:User) WITH count(u) AS total_users
-             MATCH (req:UserRegistrationConsensusNode {id: $request_id})
-             OPTIONAL MATCH (req)<-[v:VOTED_FOR {approve: true}]-(:User)
-             WITH total_users, count(v) AS total_approves
-             RETURN total_users, total_approves"
-        ).param("request_id", payload.request_id.clone());
+    if status != "PENDING" {
+         return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "Request không ở trạng thái PENDING".to_string() })));
+    }
 
-        let mut check_stream = state.graph.execute(q_check).await.unwrap();
-        let check_row = check_stream.next().await.unwrap().unwrap();
-        let total_users: i64 = check_row.get("total_users").unwrap();
-        let total_approves: i64 = check_row.get("total_approves").unwrap();
+    let q_check = query(
+        "MATCH (u:User) WITH count(u) AS total_users
+         MATCH (req:UserRegistrationConsensusNode {id: $request_id})
+         OPTIONAL MATCH (req)<-[v:VOTED_FOR {approve: true}]-(:User)
+         WITH total_users, req, count(v) AS total_approves
+         RETURN total_users, total_approves, req.invite_code AS invite_code, req.username AS username, req.password AS password"
+    ).param("request_id", payload.request_id.clone());
 
-        if total_approves * 2 <= total_users { // <= 50%
-            let q_reset = query("MATCH (req:UserRegistrationConsensusNode {id: $request_id}) SET req.status = 'PENDING', req.locked_at = null, req.locked_by = null").param("request_id", payload.request_id.clone());
-            state.graph.run(q_reset).await.unwrap();
+    let mut check_stream = state.graph.execute(q_check).await.unwrap();
+    let check_row = check_stream.next().await.unwrap().unwrap();
+    let total_users: i64 = check_row.get("total_users").unwrap();
+    let total_approves: i64 = check_row.get("total_approves").unwrap();
 
-            let q_del_c = query("MATCH ()-[c:CONFIRMED_FOR]->(req:UserRegistrationConsensusNode {id: $request_id}) DELETE c").param("request_id", payload.request_id.clone());
-            state.graph.run(q_del_c).await.unwrap();
-        }
+    // AUTO-APPROVE LOGIC (1 PHASE)
+    if total_approves * 2 > total_users {
+        let invite_code: String = check_row.get("invite_code").unwrap();
+        let username: String = check_row.get("username").unwrap();
+        let password: String = check_row.get("password").unwrap();
+
+        let new_user_id = Uuid::new_v4().to_string();
+
+        let q_finalize = query(
+            "MATCH (req:UserRegistrationConsensusNode {id: $request_id})
+             MATCH (inviter:User)-[:GENERATED]->(ic:InviteCode {code: $invite_code, used: false})
+             SET ic.used = true
+             CREATE (u:User:Entity {id: $new_user_id, username: $username, password: $password})
+             CREATE (u)-[:INVITED_BY]->(inviter)
+             CREATE (u)-[:USED_CODE]->(ic)
+             CREATE (req)-[:RESULTS_IN]->(u)
+             SET req.status = 'APPROVED'"
+        )
+        .param("request_id", payload.request_id.clone())
+        .param("invite_code", invite_code)
+        .param("username", username)
+        .param("password", password)
+        .param("new_user_id", new_user_id.clone());
+
+        state.graph.run(q_finalize).await.unwrap();
+
+        return Ok(Json(AuthResponse {
+            message: "Đồng thuận đạt > 50%. Tài khoản đã được duyệt thành công!".to_string(),
+            user_id: Some(new_user_id),
+            is_genesis: false,
+            invite_codes: vec![],
+            request_id: None,
+        }));
     }
 
     Ok(Json(AuthResponse {
@@ -348,161 +398,16 @@ pub async fn vote(
     }))
 }
 
-// --- API: CHỐT ĐỒNG THUẬN (LOCK) ---
-pub async fn lock_consensus(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<ConsensusPayload>,
-) -> Result<Json<AuthResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let q_check = query(
-        "MATCH (u:User) WITH count(u) AS total_users
-         MATCH (req:UserRegistrationConsensusNode {id: $request_id})
-         OPTIONAL MATCH (req)<-[v:VOTED_FOR {approve: true}]-(:User)
-         WITH total_users, req, count(v) AS total_approves
-         RETURN total_users, total_approves, req.status AS status"
-    ).param("request_id", payload.request_id.clone());
-
-    let mut stream = state.graph.execute(q_check).await.unwrap();
-    let row = stream.next().await.unwrap().ok_or((
-        StatusCode::BAD_REQUEST,
-        Json(ErrorResponse { message: "Request không tồn tại".to_string() }),
-    ))?;
-
-    let total_users: i64 = row.get("total_users").unwrap();
-    let total_approves: i64 = row.get("total_approves").unwrap();
-    let status: String = row.get("status").unwrap_or_else(|_| "PENDING".to_string());
-
-    if status != "PENDING" {
-         return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "Request không ở trạng thái PENDING".to_string() })));
-    }
-
-    if total_approves * 2 <= total_users {
-         return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "Số phiếu chưa vượt quá 50%".to_string() })));
-    }
-
-    let q_check_self = query(
-        "MATCH (u:User {id: $user_id})-[v:VOTED_FOR {approve: true}]->(req:UserRegistrationConsensusNode {id: $request_id}) RETURN v"
-    ).param("user_id", payload.user_id.clone()).param("request_id", payload.request_id.clone());
-    
-    let mut self_stream = state.graph.execute(q_check_self).await.unwrap();
-    if self_stream.next().await.unwrap().is_none() {
-         return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "Bạn chưa bỏ phiếu đồng ý, không thể chốt".to_string() })));
-    }
-
-    let q_lock = query(
-        "MATCH (req:UserRegistrationConsensusNode {id: $request_id})
-         SET req.status = 'LOCKED', req.locked_at = datetime(), req.locked_by = $user_id"
-    ).param("request_id", payload.request_id.clone()).param("user_id", payload.user_id.clone());
-
-    state.graph.run(q_lock).await.unwrap();
-
-    Ok(Json(AuthResponse {
-        message: "Chốt đồng thuận thành công".to_string(),
-        user_id: None, is_genesis: false, invite_codes: vec![], request_id: Some(payload.request_id)
-    }))
-}
-
-// --- API: XÁC NHẬN (CONFIRM) ---
-pub async fn confirm_consensus(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<ConsensusPayload>,
-) -> Result<Json<AuthResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let q_check = query(
-        "MATCH (req:UserRegistrationConsensusNode {id: $request_id})
-         RETURN req.status AS status, req.locked_at AS locked_at, req.invite_code AS invite_code, req.username AS username, req.password AS password"
-    ).param("request_id", payload.request_id.clone());
-
-    let mut stream = state.graph.execute(q_check).await.unwrap();
-    let row = stream.next().await.unwrap().ok_or(( StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "Request không tồn tại".to_string() }) ))?;
-
-    let status: String = row.get("status").unwrap_or_else(|_| "PENDING".to_string());
-    if status != "LOCKED" {
-         return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "Request không ở trạng thái LOCKED".to_string() })));
-    }
-
-    let q_time = query(
-        "MATCH (req:UserRegistrationConsensusNode {id: $request_id})
-         RETURN datetime() > req.locked_at + duration('P1D') AS is_timeout"
-    ).param("request_id", payload.request_id.clone());
-    let mut time_s = state.graph.execute(q_time).await.unwrap();
-    let time_r = time_s.next().await.unwrap().unwrap();
-    let is_timeout: bool = time_r.get("is_timeout").unwrap_or(false);
-
-    if is_timeout {
-        let q_reset = query("MATCH (req:UserRegistrationConsensusNode {id: $request_id}) SET req.status = 'PENDING', req.locked_at = null, req.locked_by = null").param("request_id", payload.request_id.clone());
-        state.graph.run(q_reset).await.unwrap();
-        
-        let q_del_c = query("MATCH ()-[c:CONFIRMED_FOR]->(req:UserRegistrationConsensusNode {id: $request_id}) DELETE c").param("request_id", payload.request_id.clone());
-        state.graph.run(q_del_c).await.unwrap();
-        
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "Đã quá hạn 1 ngày. Yêu cầu đã bị hủy chốt và quay lại trạng thái ban đầu.".to_string() })));
-    }
-
-    let q_confirm = query(
-        "MATCH (u:User {id: $user_id}), (req:UserRegistrationConsensusNode {id: $request_id})
-         MERGE (u)-[c:CONFIRMED_FOR]->(req)
-         SET c.created_at = datetime()"
-    ).param("user_id", payload.user_id.clone()).param("request_id", payload.request_id.clone());
-    state.graph.run(q_confirm).await.unwrap();
-
-    let q_check_done = query(
-        "MATCH (u:User) WITH count(u) AS total_users
-         MATCH (req:UserRegistrationConsensusNode {id: $request_id})
-         OPTIONAL MATCH (req)<-[c:CONFIRMED_FOR]-(:User)
-         WITH total_users, count(c) AS total_confirms
-         RETURN total_users, total_confirms"
-    ).param("request_id", payload.request_id.clone());
-
-    let mut cd_s = state.graph.execute(q_check_done).await.unwrap();
-    let cd_r = cd_s.next().await.unwrap().unwrap();
-    let total_users: i64 = cd_r.get("total_users").unwrap();
-    let total_confirms: i64 = cd_r.get("total_confirms").unwrap();
-
-    if total_confirms * 2 > total_users {
-        let invite_code: String = row.get("invite_code").unwrap();
-        let username: String = row.get("username").unwrap();
-        let password: String = row.get("password").unwrap();
-
-        let q_finalize = query(
-            "MATCH (req:UserRegistrationConsensusNode {id: $request_id})
-             MATCH (inviter:User)-[:GENERATED]->(ic:InviteCode {code: $invite_code, used: false})
-             SET ic.used = true
-             CREATE (u:User:Entity {id: $request_id, username: $username, password: $password})
-             CREATE (u)-[:INVITED_BY]->(inviter)
-             CREATE (u)-[:USED_CODE]->(ic)
-             CREATE (req)-[:RESULTS_IN]->(u)
-             SET req.status = 'APPROVED'"
-        )
-        .param("request_id", payload.request_id.clone())
-        .param("invite_code", invite_code)
-        .param("username", username)
-        .param("password", password);
-
-        state.graph.run(q_finalize).await.unwrap();
-
-        return Ok(Json(AuthResponse {
-            message: "Tạo tài khoản thành công!".to_string(),
-            user_id: Some(payload.request_id.clone()),
-            is_genesis: false,
-            invite_codes: vec![],
-            request_id: None,
-        }));
-    }
-
-    Ok(Json(AuthResponse {
-        message: "Xác nhận thành công. Chờ thêm người xác nhận.".to_string(),
-        user_id: None, is_genesis: false, invite_codes: vec![], request_id: Some(payload.request_id)
-    }))
-}
-
 // --- API: LẤY DANH SÁCH YÊU CẦU ĐANG CHỜ (ĐỂ HIỂN THỊ UI) ---
 pub async fn get_pending_requests(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<PendingRequestInfo>>, (StatusCode, Json<ErrorResponse>)> {
     let q = query(
-        "MATCH (req:UserRegistrationConsensusNode)
-         WHERE req.status IN ['PENDING', 'LOCKED']
+        "MATCH (u_all:User) WITH count(u_all) AS total_users
+         MATCH (req:UserRegistrationConsensusNode)
+         WHERE req.status = 'PENDING'
          OPTIONAL MATCH (u:User)-[v:VOTED_FOR {approve: true}]->(req)
-         RETURN req.id AS id, req.username AS username, req.invite_code AS invite_code, 
+         RETURN total_users, req.id AS id, req.username AS username, req.invite_code AS invite_code, 
                 req.status AS status, req.locked_by AS locked_by, req.locked_at AS locked_at,
                 collect(u.id) AS voted_by
          ORDER BY req.locked_at DESC"
@@ -521,6 +426,7 @@ pub async fn get_pending_requests(
         let username: String = row.get("username").unwrap();
         let invite_code: String = row.get("invite_code").unwrap();
         let status: String = row.get("status").unwrap();
+        let total_users: i64 = row.get("total_users").unwrap_or(0);
         
         let mut locked_by_opt = None;
         if let Ok(lb) = row.get::<String>("locked_by") {
@@ -542,6 +448,7 @@ pub async fn get_pending_requests(
             locked_by: locked_by_opt,
             locked_at: locked_at_opt,
             voted_by,
+            total_users,
         });
     }
 

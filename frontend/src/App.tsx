@@ -39,6 +39,15 @@ function App() {
     const endpoint = isLogin ? "/login" : "/register";
     try {
       const { data } = await axios.post("http://localhost:3000/api/auth" + endpoint, form);
+      
+      // Nếu là đăng ký và chưa có user_id (nghĩa là đang chờ duyệt)
+      if (!isLogin && !data.user_id && data.request_id) {
+        alert(data.message);
+        setIsLogin(true); // Chuyển về tab đăng nhập
+        setForm({ username: '', password: '', invite_code: '' });
+        return;
+      }
+
       setUserData(data);
       // Lưu vào LocalStorage
       localStorage.setItem('indra_session', JSON.stringify(data));
@@ -139,7 +148,19 @@ function App() {
                         <div className="flex justify-between items-start mb-2">
                           <div>
                             <p className="text-cyan-300 font-bold text-sm">User: {req.username}</p>
-                            <p className="text-slate-500 text-xs font-mono">Code: {req.invite_code}</p>
+                            <p className="text-slate-500 text-xs font-mono mb-1">Code: {req.invite_code}</p>
+                            <div className="flex items-center gap-2">
+                              {(() => {
+                                const votesCount = req.voted_by ? req.voted_by.length : 0;
+                                const total = req.total_users || 1; // avoid division by zero
+                                const percentage = ((votesCount / total) * 100).toFixed(0);
+                                return (
+                                  <span className="text-xs text-slate-400 bg-slate-900 border border-slate-700 px-2 py-0.5 rounded-full">
+                                    {votesCount}/{total} Phiếu ({percentage}%)
+                                  </span>
+                                );
+                              })()}
+                            </div>
                           </div>
                           <span className={`text-[10px] font-bold px-2 py-1 rounded ${req.status === 'LOCKED' ? 'bg-amber-900/50 text-amber-500 border border-amber-800' : 'bg-blue-900/50 text-blue-400 border border-blue-800'}`}>
                             {req.status}
@@ -169,32 +190,6 @@ function App() {
                               </button>
                             );
                           })()}
-
-                          {req.status === 'PENDING' && (
-                            <button 
-                              onClick={async () => {
-                                try {
-                                  await axios.post("http://localhost:3000/api/auth/lock-consensus", { user_id: userData.user_id, request_id: req.id });
-                                  alert("Đã chốt (Locked)!");
-                                  fetchPendingRequests();
-                                } catch(e:any) { alert(e.response?.data?.message || "Lỗi") }
-                              }}
-                              className="bg-amber-600 hover:bg-amber-500 text-white text-xs px-3 py-1.5 rounded"
-                            >Chốt</button>
-                          )}
-
-                          {req.status === 'LOCKED' && (
-                            <button 
-                              onClick={async () => {
-                                try {
-                                  const res = await axios.post("http://localhost:3000/api/auth/confirm-consensus", { user_id: userData.user_id, request_id: req.id });
-                                  alert(res.data.message);
-                                  fetchPendingRequests();
-                                } catch(e:any) { alert(e.response?.data?.message || "Lỗi") }
-                              }}
-                              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-3 py-1.5 rounded"
-                            >Xác nhận (Confirm)</button>
-                          )}
                         </div>
                       </li>
                     ))}
